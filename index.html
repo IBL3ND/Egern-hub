@@ -657,22 +657,46 @@
         }
 
         if (argList.length) {
-          out.push('compat_arguments:');
-          argList.forEach(function (a) { out.push('  ' + a.key + ': ' + yamlQuoted(a.value)); });
-          out.push('compat_arguments_schema:');
-          argList.forEach(function (a) {
-            out.push('  ' + yamlScalar(a.key) + ':');
-            out.push('    name: ' + yamlScalar(a.key));
-            out.push('    description: ' + yamlScalar(descMap[a.key] || a.key));
-            out.push('    default_value: ' + yamlQuoted(a.value));
-            var opts = null;
-            if (a.isArray && a.options && a.options.length) opts = a.options;
-            else if (String(a.value).trim().toLowerCase() === 'true' || String(a.value).trim().toLowerCase() === 'false') opts = ['true', 'false'];
-            if (opts) {
-              out.push('    options:');
-              opts.forEach(function (o) { out.push('    - ' + yamlQuoted(o)); });
+          /* 参数归一化（对齐 Egern 的开关渲染条件）：
+             - Surge/Loon 常用 0/1 表示开关，但 Egern 只有 options 为 true/false 时才渲染成开关按钮，
+               0/1 会变成要手输数字的文本框；这里把 0/1 归一为 false/true 并补 options（1↔true、0↔false，开关状态不变）。
+             - 名称类文本参数（键名含 名称/名字/name 等）的占位默认值 '0' 表示留空（脚本按未设置处理），归一为空字符串。
+             - 值 '--' 的是 Surge 的分组标题行、不是真参数：降为 YAML 注释保留分组，不再生成设置项。 */
+          function isTextArg(key) { return /名称|名字|标题|文本|备注|name|title|text|label/i.test(key); }
+          var nargs = argList.map(function (a) {
+            if (a.isArray) return a;
+            var v = String(a.value).trim();
+            var lv = v.toLowerCase();
+            if (v === '--') return { sep: true, key: a.key };
+            if ((lv === '0' || lv === '1' || lv === 'true' || lv === 'false') && !isTextArg(a.key)) {
+              return { key: a.key, value: (lv === '1' || lv === 'true') ? 'true' : 'false', bool: true };
             }
+            if (lv === '0' && isTextArg(a.key)) return { key: a.key, value: '' };
+            return a;
           });
+          var hasArgs = nargs.some(function (a) { return !a.sep; });
+          if (hasArgs) {
+            out.push('compat_arguments:');
+            nargs.forEach(function (a) {
+              if (a.sep) { out.push('  # ' + a.key); return; }
+              out.push('  ' + a.key + ': ' + yamlQuoted(a.value));
+            });
+            out.push('compat_arguments_schema:');
+            nargs.forEach(function (a) {
+              if (a.sep) { out.push('  # ' + a.key); return; }
+              out.push('  ' + yamlScalar(a.key) + ':');
+              out.push('    name: ' + yamlScalar(a.key));
+              out.push('    description: ' + yamlScalar(descMap[a.key] || a.key));
+              out.push('    default_value: ' + yamlQuoted(a.value));
+              var opts = null;
+              if (a.isArray && a.options && a.options.length) opts = a.options;
+              else if (a.bool) opts = ['true', 'false'];
+              if (opts) {
+                out.push('    options:');
+                opts.forEach(function (o) { out.push('    - ' + yamlQuoted(o)); });
+              }
+            });
+          }
         }
 
         // 逻辑规则子条件递归渲染：叶子 / and / or 是列表项，not 的 match 是单个映射
